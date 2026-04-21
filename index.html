@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1a1a2e">
+<title>ABB Маркировка — Сканер</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2/dist/quagga.min.js"></script>
+<script src="https://fastly.jsdelivr.net/npm/barcode-detector@3/dist/es/polyfill.min.js" type="module"></script>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --surface2: #0f3460;
+  --accent: #e94560;
+  --green: #00c853;
+  --red: #ff1744;
+  --orange: #ff8f00;
+  --text: #eee;
+  --text2: #aaa;
+  --radius: 12px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg); color: var(--text);
+  min-height: 100vh; min-height: 100dvh;
+  overflow-x: hidden; -webkit-tap-highlight-color: transparent;
+}
+.app { max-width: 600px; margin: 0 auto; padding: 12px; padding-bottom: 100px; }
+.header { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; margin-bottom: 8px; }
+.header h1 { font-size: 20px; font-weight: 700; }
+.header-actions { display: flex; gap: 8px; }
+.icon-btn {
+  width: 40px; height: 40px; border-radius: 50%; border: none;
+  background: var(--surface); color: var(--text); font-size: 18px;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.icon-btn:active { background: var(--surface2); }
+
+.upload-area {
+  border: 2px dashed var(--surface2); border-radius: var(--radius);
+  padding: 40px 20px; text-align: center; cursor: pointer;
+  transition: border-color 0.3s, background 0.3s; margin-bottom: 12px;
+}
+.upload-area:active, .upload-area.dragover { border-color: var(--accent); background: rgba(233,69,96,0.1); }
+.upload-icon { font-size: 48px; margin-bottom: 12px; }
+.upload-text { color: var(--text2); font-size: 14px; }
+.upload-text strong { color: var(--text); }
+input[type="file"] { display: none; }
+
+.base-info { background: var(--surface); border-radius: var(--radius); padding: 14px; margin-bottom: 12px; }
+.base-info .bi-name { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+.base-info .bi-meta { font-size: 12px; color: var(--text2); }
+.base-info .bi-row { display: flex; justify-content: space-between; margin-top: 8px; gap: 8px; }
+.base-info .bi-chip {
+  flex: 1; background: var(--surface2); border-radius: 8px; padding: 8px; text-align: center;
+}
+.base-info .bi-chip .bi-num { font-size: 20px; font-weight: 700; color: var(--accent); }
+.base-info .bi-chip .bi-lbl { font-size: 11px; color: var(--text2); margin-top: 2px; }
+
+.tab-bar { display: flex; gap: 4px; margin-bottom: 12px; background: var(--surface); border-radius: var(--radius); padding: 4px; }
+.tab-btn { flex: 1; padding: 8px; border: none; border-radius: 8px; background: transparent; color: var(--text2); font-size: 13px; font-weight: 600; cursor: pointer; }
+.tab-btn.active { background: var(--accent); color: white; }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+.hint {
+  background: var(--surface); border-radius: var(--radius); padding: 16px;
+  color: var(--text2); font-size: 13px; line-height: 1.5;
+}
+.hint strong { color: var(--text); }
+
+.scan-btn {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  width: calc(100% - 24px); max-width: 576px; padding: 16px; border: none;
+  border-radius: var(--radius); background: var(--accent); color: white;
+  font-size: 18px; font-weight: 700; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  z-index: 100; box-shadow: 0 4px 20px rgba(233,69,96,0.4);
+}
+.scan-btn:active { transform: translateX(-50%) scale(0.97); }
+.scan-btn:disabled { opacity: 0.5; }
+.scan-btn svg { width: 24px; height: 24px; }
+
+/* Scanner */
+.scanner-overlay { position: fixed; inset: 0; background: #000; z-index: 1000; display: none; flex-direction: column; }
+.scanner-overlay.active { display: flex; }
+.scanner-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; background: rgba(0,0,0,0.8); z-index: 10;
+}
+.scanner-header h2 { font-size: 16px; color: white; }
+.scanner-header-btns { display: flex; gap: 8px; }
+.scanner-close {
+  width: 36px; height: 36px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.3);
+  background: transparent; color: white; font-size: 18px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.scanner-body { flex: 1; position: relative; overflow: hidden; background: #000; }
+#videoContainer { width: 100%; height: 100%; }
+#videoContainer video { width: 100% !important; height: 100% !important; object-fit: cover !important; position: absolute; top: 0; left: 0; }
+#videoContainer canvas { display: none !important; }
+#videoContainer canvas.drawingBuffer { display: none !important; }
+.scan-frame {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  width: 85%; height: 100px; border: 2px solid var(--accent); border-radius: 8px;
+  pointer-events: none; box-shadow: 0 0 0 9999px rgba(0,0,0,0.45);
+}
+.scan-frame::after {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: var(--accent); animation: scanLine 2s ease-in-out infinite;
+  box-shadow: 0 0 8px var(--accent);
+}
+@keyframes scanLine { 0%,100%{top:0} 50%{top:calc(100% - 2px)} }
+.scanner-bottom {
+  padding: 12px 16px; background: rgba(0,0,0,0.8); z-index: 10;
+  display: flex; gap: 8px; align-items: center;
+}
+.scanner-bottom input {
+  flex: 1; padding: 10px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.1); color: white; font-size: 16px;
+}
+.scanner-bottom input::placeholder { color: rgba(255,255,255,0.4); }
+.scanner-bottom button {
+  padding: 10px 16px; border-radius: 8px; border: none;
+  background: var(--accent); color: white; font-weight: 700; font-size: 14px; cursor: pointer;
+  white-space: nowrap;
+}
+#photoInput { display: none; }
+.debug-info {
+  position: absolute; bottom: 80px; left: 12px; right: 12px;
+  color: rgba(255,255,255,0.6); font-size: 11px; text-align: center;
+  pointer-events: none; z-index: 5;
+}
+
+/* "Not found" flash toast (scanner продолжает работать) */
+.miss-toast {
+  position: absolute; top: 70px; left: 12px; right: 12px;
+  padding: 12px 16px; border-radius: 10px;
+  background: rgba(255,23,68,0.92); color: white; font-weight: 700; text-align: center;
+  z-index: 20; opacity: 0; transform: translateY(-10px);
+  transition: opacity .2s, transform .2s; pointer-events: none;
+}
+.miss-toast.show { opacity: 1; transform: translateY(0); }
+.miss-toast .mt-code { font-size: 12px; opacity: .85; font-weight: 400; margin-top: 4px; }
+
+/* Full-screen result card (ставит сканер на паузу) */
+.result-card {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.92);
+  z-index: 1100; display: none; flex-direction: column; align-items: stretch;
+  padding: 16px; padding-top: max(16px, env(safe-area-inset-top));
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+.result-card.active { display: flex; }
+.rc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.rc-header .rc-code { font-size: 12px; color: var(--text2); font-family: 'SF Mono','Menlo',monospace; }
+.rc-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.rc-block {
+  background: var(--surface); border-radius: var(--radius);
+  padding: 14px 16px; margin-bottom: 10px;
+}
+.rc-block .rc-lbl { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; }
+.rc-block .rc-val { font-size: 18px; font-weight: 700; word-break: break-word; }
+.rc-block .rc-val.mono { font-family: 'SF Mono','Menlo',monospace; font-size: 15px; font-weight: 600; }
+.rc-level-chip {
+  display: inline-block; padding: 4px 10px; border-radius: 999px;
+  background: var(--surface2); color: var(--text); font-size: 12px; font-weight: 600;
+  margin-right: 6px;
+}
+
+.rc-qty {
+  display: flex; align-items: baseline; gap: 8px;
+}
+.rc-qty .rc-qty-num { font-size: 44px; font-weight: 800; color: var(--green); line-height: 1; }
+.rc-qty .rc-qty-unit { font-size: 16px; color: var(--text2); }
+
+.rc-marking {
+  padding: 18px; border-radius: var(--radius); text-align: center;
+  font-size: 22px; font-weight: 800; letter-spacing: .5px;
+  margin-bottom: 10px;
+}
+.rc-marking.yes { background: linear-gradient(135deg, #ff6b00, #ff3d00); color: white; box-shadow: 0 4px 20px rgba(255,61,0,0.4); }
+.rc-marking.no  { background: linear-gradient(135deg, #1b5e20, #2e7d32); color: white; }
+
+.rc-next-btn {
+  flex-shrink: 0; padding: 18px; border: none;
+  border-radius: var(--radius); background: var(--accent); color: white;
+  font-size: 18px; font-weight: 700; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  margin-top: 4px;
+}
+.rc-next-btn:active { transform: scale(0.98); }
+
+/* History */
+.history-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 12px; background: var(--surface); border-radius: 8px;
+  margin-bottom: 4px; font-size: 13px;
+}
+.history-item.hi-err { border-left: 3px solid var(--red); }
+.history-item.hi-ok { border-left: 3px solid var(--green); }
+.history-item .hi-time { color: var(--text2); font-size: 11px; flex-shrink: 0; padding-top: 2px; }
+.history-item .hi-body { flex: 1; min-width: 0; }
+.history-item .hi-title { font-weight: 600; }
+.history-item .hi-meta { font-size: 11px; color: var(--text2); margin-top: 2px; }
+.history-item .hi-mark { font-size: 11px; font-weight: 700; margin-top: 2px; }
+.history-item .hi-mark.yes { color: var(--orange); }
+.history-item .hi-mark.no { color: var(--green); }
+.empty-state { text-align: center; padding: 30px; color: var(--text2); }
+.empty-state .empty-icon { font-size: 40px; margin-bottom: 10px; }
+
+.btn { padding: 10px 16px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.btn-primary { background: var(--accent); color: white; }
+.btn-secondary { background: var(--surface2); color: var(--text); }
+.btn-danger { background: var(--red); color: white; }
+.row-btns { display: flex; gap: 8px; margin-top: 12px; }
+.row-btns .btn { flex: 1; }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <div class="header">
+    <h1>🏷 ABB Маркировка</h1>
+    <div class="header-actions">
+      <button class="icon-btn" onclick="exportHistory()" title="Экспорт истории">📤</button>
+    </div>
+  </div>
+
+  <!-- Upload section (shown until база загружена) -->
+  <div id="uploadSection">
+    <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+      <div class="upload-icon">📋</div>
+      <div class="upload-text">
+        <strong>Загрузите базу EAN</strong><br>
+        Excel-файл с колонками article, ean, package_level_*_ean, МАРКИРОВКА
+      </div>
+    </div>
+    <input type="file" id="fileInput" accept=".xlsx,.xls">
+    <div class="hint">
+      <strong>Как это работает:</strong><br>
+      1. Загружаете xlsx-базу EAN-кодов ABB.<br>
+      2. Нажимаете «Сканировать» — включается камера.<br>
+      3. Сканируете штрих-код на упаковке. Если код есть в базе — видите артикул, уровень упаковки, ожидаемое количество и «МАРКИРОВКА / Не маркируется». Если нет — сообщение «Товара нет в поставке», сканер продолжает работать.<br>
+      4. Кнопкой «Далее» сбрасываете карточку и возобновляете сканирование.
+    </div>
+  </div>
+
+  <!-- Main section — после загрузки базы -->
+  <div id="mainSection" style="display:none;">
+    <div class="base-info">
+      <div class="bi-name" id="baseFileName"></div>
+      <div class="bi-meta" id="baseFileMeta"></div>
+      <div class="bi-row">
+        <div class="bi-chip"><div class="bi-num" id="baseArticles">0</div><div class="bi-lbl">Артикулов</div></div>
+        <div class="bi-chip"><div class="bi-num" id="baseEans">0</div><div class="bi-lbl">EAN-кодов</div></div>
+        <div class="bi-chip"><div class="bi-num" id="baseMarking">0</div><div class="bi-lbl">Маркируемых</div></div>
+      </div>
+    </div>
+
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="start" onclick="switchTab('start')">Старт</button>
+      <button class="tab-btn" data-tab="history" onclick="switchTab('history')">История <span id="histCount"></span></button>
+    </div>
+
+    <div class="tab-content active" id="tab-start">
+      <div class="hint">
+        <strong>База готова.</strong> Нажмите <strong>«Сканировать»</strong> внизу — откроется камера.<br><br>
+        При успешном сканировании карточка с информацией останется на экране, пока вы не нажмёте <strong>«Далее»</strong>.
+      </div>
+      <div class="row-btns">
+        <button class="btn btn-secondary" onclick="loadNewBase()">📋 Загрузить другую базу</button>
+      </div>
+    </div>
+
+    <div class="tab-content" id="tab-history">
+      <div id="historyList">
+        <div class="empty-state"><div class="empty-icon">📭</div><div>Пока нет сканирований</div></div>
+      </div>
+      <div class="row-btns" id="histActions" style="display:none;">
+        <button class="btn btn-secondary" onclick="clearHistory()">🗑 Очистить</button>
+        <button class="btn btn-primary" onclick="exportHistory()">📤 Экспорт в Excel</button>
+      </div>
+    </div>
+  </div>
+
+  <button class="scan-btn" id="scanBtn" onclick="startScanner()" disabled>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4V1h3M20 1h3v3M1 20v3h3M20 23h3v-3"/><line x1="1" y1="12" x2="23" y2="12"/></svg>
+    Сканировать
+  </button>
+</div>
+
+<!-- Scanner overlay -->
+<div class="scanner-overlay" id="scannerOverlay">
+  <div class="scanner-header">
+    <h2>Сканирование</h2>
+    <div class="scanner-header-btns">
+      <button class="scanner-close" id="torchBtn" onclick="toggleTorch()" title="Фонарик" style="font-size:20px;">🔦</button>
+      <button class="scanner-close" onclick="stopScanner()">✕</button>
+    </div>
+  </div>
+  <div class="scanner-body" id="scannerBody">
+    <div id="videoContainer"></div>
+    <div class="scan-frame"></div>
+    <div class="debug-info" id="debugInfo"></div>
+    <div class="miss-toast" id="missToast">
+      <div>⛔ Товара нет в поставке</div>
+      <div class="mt-code" id="missCode"></div>
+    </div>
+  </div>
+  <div class="scanner-bottom">
+    <input type="text" id="manualCode" placeholder="Или введите код вручную..." autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
+    <button onclick="submitManualCode()">OK</button>
+    <label class="scanner-close" style="border-style:solid;cursor:pointer;font-size:15px;" title="Сфотографировать">
+      📷
+      <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none;">
+    </label>
+  </div>
+</div>
+
+<!-- Result card (пауза сканера при совпадении) -->
+<div class="result-card" id="resultCard">
+  <div class="rc-header">
+    <div class="rc-code" id="rcCode"></div>
+    <button class="scanner-close" onclick="closeResultCard()" title="Закрыть">✕</button>
+  </div>
+  <div class="rc-scroll">
+    <div class="rc-marking" id="rcMarking"></div>
+    <div class="rc-block">
+      <div class="rc-lbl">Артикул</div>
+      <div class="rc-val mono" id="rcArticle"></div>
+    </div>
+    <div class="rc-block">
+      <div class="rc-lbl">Название</div>
+      <div class="rc-val" id="rcName"></div>
+    </div>
+    <div class="rc-block">
+      <div class="rc-lbl">Уровень упаковки</div>
+      <div class="rc-val" id="rcLevel"></div>
+    </div>
+    <div class="rc-block">
+      <div class="rc-lbl">Ожидаемое количество</div>
+      <div class="rc-qty">
+        <div class="rc-qty-num" id="rcQty">—</div>
+        <div class="rc-qty-unit">шт</div>
+      </div>
+    </div>
+  </div>
+  <button class="rc-next-btn" onclick="resumeScanner()">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+    Далее (новое сканирование)
+  </button>
+</div>
+
+<script>
+// ========== IndexedDB (для истории сканирований) ==========
+const DB_NAME = 'AbbMarkingScanner', DB_VER = 1;
+let db = null;
+function openDB() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(DB_NAME, DB_VER);
+    r.onupgradeneeded = e => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains('scans')) {
+        const s = d.createObjectStore('scans', { keyPath: 'id', autoIncrement: true });
+        s.createIndex('time', 'time');
+      }
+      if (!d.objectStoreNames.contains('meta')) d.createObjectStore('meta', { keyPath: 'key' });
+    };
+    r.onsuccess = () => { db = r.result; res(db); };
+    r.onerror = () => rej(r.error);
+  });
+}
+function dbPut(store, data) { return new Promise((res, rej) => { const tx = db.transaction(store, 'readwrite'); tx.objectStore(store).put(data); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); }
+function dbAdd(store, data) { return new Promise((res, rej) => { const tx = db.transaction(store, 'readwrite'); const r = tx.objectStore(store).add(data); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+function dbGet(store, key) { return new Promise((res, rej) => { const tx = db.transaction(store, 'readonly'); const r = tx.objectStore(store).get(key); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+function dbGetAll(store) { return new Promise((res, rej) => { const tx = db.transaction(store, 'readonly'); const r = tx.objectStore(store).getAll(); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+function dbClear(store) { return new Promise((res, rej) => { const tx = db.transaction(store, 'readwrite'); tx.objectStore(store).clear(); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); }
+
+// ========== Sound ==========
+let audioCtx = null;
+function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); }
+function playTone(f, dur, type='sine', vol=0.3) {
+  if (!audioCtx) return;
+  try {
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.connect(g); g.connect(audioCtx.destination);
+    o.type = type; o.frequency.value = f;
+    g.gain.setValueAtTime(vol, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+    o.start(); o.stop(audioCtx.currentTime + dur);
+  } catch(e) {}
+}
+function playSuccess() { playTone(880,.15,'sine',.4); setTimeout(()=>playTone(1108,.15,'sine',.4),100); setTimeout(()=>playTone(1320,.25,'sine',.4),200); }
+function playError() { playTone(300,.3,'square',.3); setTimeout(()=>playTone(200,.4,'square',.3),200); }
+
+// ========== State ==========
+let baseIndex = new Map(); // EAN (string) → { article, display_name, level, qty, marking }
+let baseMeta = { fileName: '', loadedAt: null, articles: 0, eans: 0, marking: 0 };
+let scanHistory = [];
+let paused = false;               // сканер на паузе (карточка показана)
+let lastScannedCode = '';
+let lastScanTime = 0;
+
+// ========== EAN Base Parsing ==========
+function normalizeEan(v) {
+  if (v === null || v === undefined) return '';
+  let s = String(v).trim();
+  if (!s) return '';
+  // Excel может прочитать как число в научном формате — приведём к целому
+  if (/^\d+\.\d+[eE]\+?\d+$/.test(s)) {
+    try { s = BigInt(Number(s)).toString(); } catch(e) {}
+  }
+  // Убираем всё, что не цифры (иногда в Excel попадает .0 в конце)
+  s = s.replace(/\.0+$/, '').replace(/\s+/g, '');
+  return s;
+}
+
+function extractPieces(unitsStr) {
+  // Примеры: "48 piece", "box 90 piece", "pallet (lift) 1500 piece", "carton 5 piece"
+  if (!unitsStr) return null;
+  const m = String(unitsStr).match(/(\d+)\s*piece/i);
+  if (m) return parseInt(m[1], 10);
+  // запасной вариант — первое число в строке
+  const m2 = String(unitsStr).match(/(\d+)/);
+  return m2 ? parseInt(m2[1], 10) : null;
+}
+
+function parseBase(arrayBuffer, fileName) {
+  const wb = XLSX.read(arrayBuffer, { type: 'array' });
+  // Ищем лист с названием "Base" — либо берём первый
+  let sheetName = wb.SheetNames.find(n => n.toLowerCase() === 'base') || wb.SheetNames[0];
+  const ws = wb.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  if (!rows.length) throw new Error('Пустой лист');
+
+  // Находим заголовок
+  const header = rows[0].map(h => String(h).trim().toLowerCase());
+  const idx = (name) => header.indexOf(name);
+  const iArticle = idx('article');
+  const iName = idx('display_name');
+  const iEan = idx('ean');
+  const iP1U = idx('package_level_1_units'), iP1E = idx('package_level_1_ean');
+  const iP2U = idx('package_level_2_units'), iP2E = idx('package_level_2_ean');
+  const iP3U = idx('package_level_3_units'), iP3E = idx('package_level_3_ean');
+  const iMark = header.indexOf('маркировка');
+
+  if (iArticle < 0 || iEan < 0 || iMark < 0) {
+    throw new Error('Не найдены обязательные колонки: article, ean, МАРКИРОВКА. Убедитесь, что заголовки в первой строке.');
+  }
+
+  const map = new Map();           // ean -> array of records
+  const articleSet = new Set();
+  let markingYes = 0;
+
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const article = String(row[iArticle] || '').trim();
+    if (!article) continue;
+    articleSet.add(article);
+    const displayName = iName >= 0 ? String(row[iName] || '').trim() : '';
+    const markingRaw = String(row[iMark] || '').trim().toLowerCase();
+    const marking = markingRaw === 'да' ? 'yes' : (markingRaw === 'нет' ? 'no' : 'unknown');
+    if (marking === 'yes') markingYes++;
+
+    const addRec = (eanRaw, level, qty) => {
+      const ean = normalizeEan(eanRaw);
+      if (!ean) return;
+      const rec = { article, displayName, level, qty, marking, row: r + 1 };
+      if (!map.has(ean)) map.set(ean, []);
+      map.get(ean).push(rec);
+    };
+
+    addRec(row[iEan], 'EAN', 1);
+    if (iP1E >= 0) addRec(row[iP1E], 'PackageLevel1', extractPieces(row[iP1U]));
+    if (iP2E >= 0) addRec(row[iP2E], 'PackageLevel2', extractPieces(row[iP2U]));
+    if (iP3E >= 0) addRec(row[iP3E], 'PackageLevel3', extractPieces(row[iP3U]));
+  }
+
+  return {
+    index: map,
+    meta: {
+      fileName,
+      loadedAt: new Date().toISOString(),
+      articles: articleSet.size,
+      eans: map.size,
+      marking: markingYes
+    }
+  };
+}
+
+// ========== UI Flow ==========
+async function loadBase(arrayBuffer, fileName) {
+  try {
+    const { index, meta } = parseBase(arrayBuffer, fileName);
+    baseIndex = index;
+    baseMeta = meta;
+    document.getElementById('baseFileName').textContent = meta.fileName;
+    document.getElementById('baseFileMeta').textContent =
+      'Загружено: ' + new Date(meta.loadedAt).toLocaleString('ru');
+    document.getElementById('baseArticles').textContent = meta.articles;
+    document.getElementById('baseEans').textContent = meta.eans;
+    document.getElementById('baseMarking').textContent = meta.marking;
+
+    document.getElementById('uploadSection').style.display = 'none';
+    document.getElementById('mainSection').style.display = 'block';
+    document.getElementById('scanBtn').disabled = false;
+    renderHistory();
+  } catch (e) {
+    alert('Не удалось загрузить базу:\n\n' + (e.message || e));
+    console.error(e);
+  }
+}
+
+function loadNewBase() {
+  if (!confirm('Загрузить другую базу? Текущая история сканирований сохранится.')) return;
+  document.getElementById('uploadSection').style.display = 'block';
+  document.getElementById('mainSection').style.display = 'none';
+  document.getElementById('scanBtn').disabled = true;
+}
+
+function switchTab(t) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + t));
+}
+
+// ========== BARCODE SCANNER ==========
+let isScanning = false;
+let videoStream = null;
+let scanAnimFrame = null;
+let scannerMode = 'none'; // 'native' | 'quagga'
+let torchOn = false;
+let barcodeDetector = null;
+
+function hasBarcodeDetector() { return typeof BarcodeDetector !== 'undefined'; }
+
+async function startScanner() {
+  initAudio();
+  paused = false;
+  document.getElementById('scannerOverlay').classList.add('active');
+  isScanning = true;
+  document.getElementById('debugInfo').textContent = 'Запуск камеры...';
+
+  if (hasBarcodeDetector()) {
+    try { await startNativeScanner(); return; }
+    catch(e) { console.warn('BarcodeDetector failed, falling back to QuaggaJS:', e); }
+  }
+  try { await startQuaggaScanner(); }
+  catch(err) {
+    console.error('Scanner error:', err);
+    document.getElementById('debugInfo').textContent = 'Ошибка: ' + (err.message || err);
+    alert('Ошибка камеры: ' + (err.message || err) +
+      '\n\nПопробуйте:\n1. Разрешить доступ к камере\n2. Нажать 📷 для фото\n3. Ввести код вручную');
+  }
+}
+
+// Native BarcodeDetector (Android — native; iOS — polyfill via ZXing WASM)
+async function startNativeScanner() {
+  scannerMode = 'native';
+  const container = document.getElementById('videoContainer');
+  container.innerHTML = '<video id="nativeVideo" autoplay playsinline webkit-playsinline muted style="width:100%;height:100%;object-fit:cover;"></video>';
+  const video = document.getElementById('nativeVideo');
+
+  videoStream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+    audio: false
+  });
+  video.srcObject = videoStream;
+  await video.play();
+
+  await new Promise(r => { const c = () => { if (video.videoWidth > 0) r(); else requestAnimationFrame(c); }; c(); });
+
+  barcodeDetector = new BarcodeDetector({
+    formats: ['code_128','ean_13','ean_8','code_39','code_93','itf','codabar','upc_a','upc_e']
+  });
+
+  let scanEngine = 'ZXing';
+  try { if (navigator.userAgent.includes('Android') && window.BarcodeDetector.toString().includes('[native code]')) scanEngine = 'Native'; } catch(e) {}
+  document.getElementById('debugInfo').textContent =
+    `Камера: ${video.videoWidth}x${video.videoHeight} | ${scanEngine} | Наведите на штрих-код`;
+
+  async function scanFrame() {
+    if (!isScanning || scannerMode !== 'native') return;
+    if (!paused) {
+      try {
+        const results = await barcodeDetector.detect(video);
+        for (const r of results) {
+          if (r.rawValue) { await onScanSuccess(r.rawValue); break; }
+        }
+      } catch(e) {}
+    }
+    scanAnimFrame = requestAnimationFrame(scanFrame);
+  }
+  scanAnimFrame = requestAnimationFrame(scanFrame);
+}
+
+// QuaggaJS fallback
+async function startQuaggaScanner() {
+  scannerMode = 'quagga';
+  const container = document.getElementById('videoContainer');
+  container.innerHTML = '';
+
+  await new Promise((resolve, reject) => {
+    Quagga.init({
+      inputStream: {
+        name: 'Live', type: 'LiveStream', target: container,
+        constraints: {
+          facingMode: 'environment',
+          width: { min: 640, ideal: 1280, max: 1920 },
+          height: { min: 480, ideal: 720, max: 1080 },
+          focusMode: 'continuous'
+        },
+        area: { top: '20%', right: '5%', left: '5%', bottom: '20%' }
+      },
+      locator: { patchSize: 'large', halfSample: false },
+      numOfWorkers: 0, frequency: 15,
+      decoder: { readers: ['code_128_reader','ean_reader','ean_8_reader','code_39_reader','codabar_reader'], multiple: false },
+      locate: true
+    }, function(err) { if (err) { reject(err); return; } resolve(); });
+  });
+
+  Quagga.start();
+
+  const video = container.querySelector('video');
+  if (video) {
+    video.setAttribute('playsinline', 'true');
+    const waitVideo = () => {
+      if (video.videoWidth > 0)
+        document.getElementById('debugInfo').textContent = `Камера: ${video.videoWidth}x${video.videoHeight} | Наведите на штрих-код`;
+      else setTimeout(waitVideo, 200);
+    };
+    waitVideo();
+  }
+
+  Quagga.onDetected(async function(result) {
+    if (!isScanning || paused) return;
+    if (!result || !result.codeResult || !result.codeResult.code) return;
+    await onScanSuccess(result.codeResult.code);
+  });
+}
+
+async function toggleTorch() {
+  try {
+    let track = null;
+    if (scannerMode === 'native' && videoStream) track = videoStream.getVideoTracks()[0];
+    else if (scannerMode === 'quagga') {
+      const v = document.querySelector('#videoContainer video');
+      if (v && v.srcObject) track = v.srcObject.getVideoTracks()[0];
+    }
+    if (!track) return;
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    if (!caps.torch) { document.getElementById('debugInfo').textContent = 'Фонарик не поддерживается камерой'; return; }
+    torchOn = !torchOn;
+    await track.applyConstraints({ advanced: [{ torch: torchOn }] });
+    document.getElementById('torchBtn').style.background = torchOn ? 'rgba(255,200,0,0.4)' : 'transparent';
+  } catch(e) { console.error('Torch error:', e); }
+}
+
+async function stopScanner() {
+  isScanning = false;
+  paused = false;
+  torchOn = false;
+  const torchBtn = document.getElementById('torchBtn');
+  if (torchBtn) torchBtn.style.background = 'transparent';
+  if (scanAnimFrame) { cancelAnimationFrame(scanAnimFrame); scanAnimFrame = null; }
+  if (videoStream) { videoStream.getTracks().forEach(t => t.stop()); videoStream = null; }
+  try { Quagga.stop(); } catch(e) {}
+  try { Quagga.offDetected(); } catch(e) {}
+  document.getElementById('videoContainer').innerHTML = '';
+  document.getElementById('scannerOverlay').classList.remove('active');
+  scannerMode = 'none';
+  closeResultCard();
+  hideMissToast();
+}
+
+function submitManualCode() {
+  const inp = document.getElementById('manualCode');
+  const code = inp.value.trim();
+  if (code) { onScanSuccess(code); inp.value = ''; }
+}
+document.getElementById('manualCode').addEventListener('keydown', e => { if (e.key === 'Enter') submitManualCode(); });
+
+// Photo fallback
+document.getElementById('photoInput').addEventListener('change', async function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  this.value = '';
+  document.getElementById('debugInfo').textContent = 'Распознаю фото...';
+  const imgUrl = URL.createObjectURL(file);
+  Quagga.decodeSingle({
+    src: imgUrl, numOfWorkers: 0,
+    inputStream: { size: 1920 },
+    decoder: { readers: ['code_128_reader','ean_reader','ean_8_reader','code_39_reader'] },
+    locate: true, locator: { patchSize: 'large', halfSample: false }
+  }, function(result) {
+    URL.revokeObjectURL(imgUrl);
+    if (result && result.codeResult && result.codeResult.code) {
+      document.getElementById('debugInfo').textContent = 'Найден: ' + result.codeResult.code;
+      onScanSuccess(result.codeResult.code);
+    } else {
+      document.getElementById('debugInfo').textContent = 'Не распознан. Попробуйте ещё.';
+      alert('Штрих-код не распознан.\nСфотографируйте ближе или введите код вручную.');
+    }
+  });
+});
+
+// ========== Scan Result Handler ==========
+async function onScanSuccess(codeRaw) {
+  const code = normalizeEan(codeRaw);
+  if (!code) return;
+  const now = Date.now();
+  // Дебаунс — один и тот же код не обрабатываем чаще раза в 2 секунды
+  if (code === lastScannedCode && now - lastScanTime < 2000) return;
+  lastScannedCode = code; lastScanTime = now;
+
+  // Вибрация
+  if (navigator.vibrate) navigator.vibrate(80);
+
+  const recs = baseIndex.get(code);
+  const scanRecord = {
+    time: new Date().toISOString(),
+    code
+  };
+
+  if (recs && recs.length) {
+    // Несколько совпадений: если все относятся к одному артикулу — выбираем
+    // запись с "наивысшим" уровнем упаковки (он информативнее, чем EAN-штука).
+    // Если разные артикулы — показываем предупреждение.
+    const uniqueArticles = [...new Set(recs.map(r => r.article))];
+    const levelOrder = { 'PackageLevel3': 4, 'PackageLevel2': 3, 'PackageLevel1': 2, 'EAN': 1 };
+    const sorted = [...recs].sort((a, b) => (levelOrder[b.level] || 0) - (levelOrder[a.level] || 0));
+    const primary = sorted[0];
+    const multiArticle = uniqueArticles.length > 1;
+
+    playSuccess();
+    showResultCard(code, primary, multiArticle ? recs : null);
+    Object.assign(scanRecord, {
+      found: true,
+      article: primary.article,
+      displayName: primary.displayName,
+      level: primary.level,
+      qty: primary.qty,
+      marking: primary.marking,
+      ambiguous: multiArticle
+    });
+  } else {
+    // Нет в базе — показываем короткий toast и продолжаем сканировать.
+    playError();
+    if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
+    showMissToast(code);
+    Object.assign(scanRecord, { found: false });
+  }
+
+  try {
+    const id = await dbAdd('scans', scanRecord);
+    scanRecord.id = id;
+  } catch(e) { console.error('dbAdd scan failed:', e); }
+  scanHistory.unshift(scanRecord);
+  renderHistory();
+}
+
+function showResultCard(code, rec, ambiguousRecs) {
+  paused = true;
+  document.getElementById('rcCode').textContent = code;
+  document.getElementById('rcArticle').textContent = rec.article || '—';
+  document.getElementById('rcName').textContent = rec.displayName || '—';
+
+  const levelLabels = {
+    'EAN': 'единица товара',
+    'PackageLevel1': 'упаковка 1-го уровня',
+    'PackageLevel2': 'упаковка 2-го уровня',
+    'PackageLevel3': 'упаковка 3-го уровня'
+  };
+  let levelHtml = `<span class="rc-level-chip">${esc(rec.level)}</span>${esc(levelLabels[rec.level] || '')}`;
+  if (ambiguousRecs && ambiguousRecs.length > 1) {
+    // Этот EAN относится к разным артикулам — покажем предупреждение.
+    const others = ambiguousRecs
+      .filter(r => !(r.article === rec.article && r.level === rec.level))
+      .map(r => `${r.article} (${r.level})`)
+      .join(', ');
+    if (others) {
+      levelHtml += `<div style="margin-top:8px;font-size:12px;color:var(--orange);">⚠ Код встречается также у: ${esc(others)}</div>`;
+    }
+  }
+  document.getElementById('rcLevel').innerHTML = levelHtml;
+
+  document.getElementById('rcQty').textContent = rec.qty != null ? rec.qty : '—';
+
+  const mark = document.getElementById('rcMarking');
+  if (rec.marking === 'yes') {
+    mark.textContent = '🏷 МАРКИРОВКА';
+    mark.className = 'rc-marking yes';
+  } else if (rec.marking === 'no') {
+    mark.textContent = 'Не маркируется';
+    mark.className = 'rc-marking no';
+  } else {
+    mark.textContent = 'Маркировка: не указана';
+    mark.className = 'rc-marking no';
+  }
+
+  document.getElementById('resultCard').classList.add('active');
+}
+
+function closeResultCard() {
+  document.getElementById('resultCard').classList.remove('active');
+  // Возобновляем сканер при любом закрытии карточки (и по «Далее», и по ✕),
+  // иначе камера показывается, но paused=true и ничего не считывается.
+  paused = false;
+  lastScannedCode = ''; // сбрасываем дебаунс, чтобы тот же код можно было отсканировать снова
+  lastScanTime = 0;
+}
+function resumeScanner() {
+  closeResultCard();
+}
+
+let _missTimeout = null;
+function showMissToast(code) {
+  const el = document.getElementById('missToast');
+  document.getElementById('missCode').textContent = code;
+  el.classList.add('show');
+  clearTimeout(_missTimeout);
+  _missTimeout = setTimeout(hideMissToast, 2200);
+}
+function hideMissToast() {
+  document.getElementById('missToast').classList.remove('show');
+}
+
+// ========== History rendering ==========
+function renderHistory() {
+  const list = document.getElementById('historyList');
+  const actions = document.getElementById('histActions');
+  const cntSpan = document.getElementById('histCount');
+  cntSpan.textContent = scanHistory.length ? `(${scanHistory.length})` : '';
+
+  if (!scanHistory.length) {
+    list.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><div>Пока нет сканирований</div></div>';
+    actions.style.display = 'none';
+    return;
+  }
+  let h = '';
+  for (const s of scanHistory) {
+    const time = new Date(s.time).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    if (s.found) {
+      const markLbl = s.marking === 'yes' ? '🏷 МАРКИРОВКА' : (s.marking === 'no' ? 'Не маркируется' : '—');
+      const markCls = s.marking === 'yes' ? 'yes' : 'no';
+      h += `<div class="history-item hi-ok">
+        <span class="hi-time">${time}</span>
+        <div class="hi-body">
+          <div class="hi-title">${esc(s.article || '—')}${s.displayName ? ' · ' + esc(s.displayName) : ''}</div>
+          <div class="hi-meta">${esc(s.code)} · ${esc(s.level || '—')} · ${s.qty != null ? s.qty + ' шт' : '—'}</div>
+          <div class="hi-mark ${markCls}">${markLbl}</div>
+        </div>
+      </div>`;
+    } else {
+      h += `<div class="history-item hi-err">
+        <span class="hi-time">${time}</span>
+        <div class="hi-body">
+          <div class="hi-title">⛔ Товара нет в поставке</div>
+          <div class="hi-meta">${esc(s.code)}</div>
+        </div>
+      </div>`;
+    }
+  }
+  list.innerHTML = h;
+  actions.style.display = 'flex';
+}
+function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+
+async function clearHistory() {
+  if (!confirm('Очистить всю историю сканирований?')) return;
+  await dbClear('scans');
+  scanHistory = [];
+  renderHistory();
+}
+
+async function exportHistory() {
+  if (!scanHistory.length) { alert('История пуста'); return; }
+  const rows = [[
+    'Время', 'Штрих-код', 'Найден', 'Артикул', 'Название',
+    'Уровень упаковки', 'Кол-во, шт', 'Маркировка'
+  ]];
+  // Отсортируем по времени по возрастанию
+  const sorted = [...scanHistory].sort((a,b) => new Date(a.time) - new Date(b.time));
+  for (const s of sorted) {
+    rows.push([
+      new Date(s.time).toLocaleString('ru'),
+      s.code,
+      s.found ? 'Да' : 'Нет',
+      s.article || '',
+      s.displayName || '',
+      s.level || '',
+      s.qty != null ? s.qty : '',
+      s.found ? (s.marking === 'yes' ? 'МАРКИРОВКА' : (s.marking === 'no' ? 'Не маркируется' : '')) : ''
+    ]);
+  }
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [
+    { wch: 20 }, { wch: 16 }, { wch: 8 }, { wch: 18 }, { wch: 22 },
+    { wch: 16 }, { wch: 10 }, { wch: 16 }
+  ];
+  XLSX.utils.book_append_sheet(wb, ws, 'Сканирования');
+  const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+  XLSX.writeFile(wb, `ABB_marking_history_${stamp}.xlsx`);
+}
+
+// ========== Init ==========
+document.getElementById('fileInput').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => loadBase(new Uint8Array(ev.target.result), file.name);
+  reader.readAsArrayBuffer(file);
+  this.value = '';
+});
+
+const uploadArea = document.getElementById('uploadArea');
+uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+uploadArea.addEventListener('drop', e => {
+  e.preventDefault(); uploadArea.classList.remove('dragover');
+  const f = e.dataTransfer.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = ev => loadBase(new Uint8Array(ev.target.result), f.name);
+  r.readAsArrayBuffer(f);
+});
+
+document.addEventListener('touchstart', function f() { initAudio(); document.removeEventListener('touchstart', f); }, { once: true });
+document.addEventListener('click', function f() { initAudio(); document.removeEventListener('click', f); }, { once: true });
+
+(async function init() {
+  try { await openDB(); } catch(e) { console.error('DB open failed:', e); }
+  try {
+    scanHistory = await dbGetAll('scans');
+    scanHistory.sort((a, b) => new Date(b.time) - new Date(a.time));
+  } catch(e) { scanHistory = []; }
+  renderHistory();
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+})();
+</script>
+</body>
+</html>
